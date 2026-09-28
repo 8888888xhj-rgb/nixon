@@ -12,39 +12,81 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Check ZIP
+        run: |
+          ls -lh
+          test -f NikoCake_mobile_build_package.zip
 
       - name: Extract project ZIP
         run: |
-          mkdir project
-          unzip -o NikoCake_mobile_build_package.zip -d project
-          rsync -a project/ ./
+          rm -rf project
+          mkdir -p project
+          unzip -q NikoCake_mobile_build_package.zip -d project
 
-      - name: Set up Java 17
+          echo "===== ZIP CONTENT ====="
+          find project -maxdepth 3 -type f | head -100
+
+      - name: Find Android project
+        run: |
+          SETTINGS_FILE=$(find project -name settings.gradle -o -name settings.gradle.kts | head -1)
+
+          if [ -z "$SETTINGS_FILE" ]; then
+            echo "ERROR: 找不到 settings.gradle 或 settings.gradle.kts"
+            echo "ZIP 内容如下："
+            find project -maxdepth 5 -type f
+            exit 1
+          fi
+
+          PROJECT_DIR=$(dirname "$SETTINGS_FILE")
+
+          echo "Android project found:"
+          echo "$PROJECT_DIR"
+
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+
+      - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
 
       - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Install Android SDK
-        run: |
-          sdkmanager "platforms;android-35" "build-tools;35.0.0"
-
-      - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
+        uses: android-actions/setup-android@v4
         with:
-          gradle-version: "8.10"
+          packages: "platform-tools"
+
+      - name: Check Gradle project
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          echo "===== PROJECT FILES ====="
+          ls -la
+
+          echo "===== GRADLE ====="
+          if [ -f "./gradlew" ]; then
+            chmod +x ./gradlew
+            ./gradlew --version
+          else
+            echo "ERROR: 找不到 gradlew"
+            exit 1
+          fi
 
       - name: Build Debug APK
+        working-directory: ${{ env.PROJECT_DIR }}
         run: |
-          gradle --no-daemon assembleDebug
+          chmod +x ./gradlew
+          ./gradlew --no-daemon assembleDebug
+
+      - name: Find APK
+        run: |
+          echo "===== APK FILES ====="
+          find "${PROJECT_DIR}" -type f -name "*.apk" -print
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: NikoCake-debug-apk
-          path: app/build/outputs/apk/debug/app-debug.apk
+          name: NikoCake-APK
+          path: "${{ env.PROJECT_DIR }}/**/build/outputs/apk/**/*.apk"
+          if-no-files-found: error
